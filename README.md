@@ -113,3 +113,7 @@ scripts/
   `analyze_outline.py` 重新校准
 - 中文 `m:nor`（公式里的正文）在部分在线预览器里仍会被渲染成斜体 —— 这是渲染器的问题，
   交付 PDF 可绕开
+
+## 许可
+
+[MIT](LICENSE)
