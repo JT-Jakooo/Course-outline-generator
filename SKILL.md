@@ -75,6 +75,9 @@ agent_created: true
 9. **语言与素材一致（全英文）**。笔记正文、条目名（`Definition 2.4`）、术语与连接语
    一律使用**素材的原语言**；本课程素材为英文讲义 → **输出全英文**，
    **不翻译成中文**，不做中英混排（数学符号与公式除外）。
+   **注意**：写源 md 时最容易漏的是**正文第一行的 Scope/说明行** —— 它不在标题、不在条目里，
+   手写时极易混进中文（2026-10-03 PDE 提纲就是这里混入了"考点"）。
+   写完必须跑 `verify_docx.py` 看"正文含汉字"是否为 0（见铁律三·B）。
 
 > **与下文排版规则的关系**：后面所有排版规则（字号、对齐、公式修复……）
 > **只改变呈现形式，不允许改变内容**。两者冲突时，**以内容边界为准**。
@@ -134,6 +137,16 @@ NBSP 会让 Word 无法在词间断行，整行只能挤在数学运算符处折
 
 脚本自动把 NBSP 换回普通空格；`\quad` / `\qquad` 这类**有意**的间距另用标记保留为 NBSP。
 **校验时看 `verify_docx.py` 的"正文 run 含 NBSP"，应为 0（仅 `\quad` 处允许）。**
+
+### 铁律三·B：生成的提纲/作业文档严禁出现汉字（2026-10-03 PDE 事故）
+
+跨科目约定：**生成的提纲/作业文档一律全英文**，正文（含 Scope 行、标题、目录条目）
+严禁混入任何中文。2026-10-03 PDE 提纲的 Scope 行混入"考点"二字，PDF 目录页直接可见，
+被用户指出。
+
+`verify_docx.py` 已加硬校验 **"正文含汉字"**（扫 prose `w:t`，含 U+4E00–9FFF 与
+扩展 A 区）——**必须为 0，否则退出码 1**。确要出中文文档时加 `--allow-cjk` 豁免。
+中文只允许出现在：与用户的对话回复、memory 记录；绝不允许进入生成文档的源 md。
 
 ### 铁律四：括号必须随内容高度伸缩
 
@@ -224,6 +237,8 @@ det  lim  limsup  liminf  sup  inf  min  max  gcd  Pr
 
 | 用途 | 字号 | 字重 | 颜色 |
 |---|---|---|---|
+| **文档大标题** `<课程全名> Outline` | **16pt（sz=32）** | **加粗** | 黑（左对齐、Cambria Math） |
+| **作者行** `By JasonTan` | **14pt（sz=28）** | 常规 | 黑（字体 **Algerian**、**右对齐**） |
 | 章 `Chapter N` | 15pt（sz=30） | 加粗 | **#0F4761 深蓝** |
 | 节 `N.M` | 14pt（sz=28） | 加粗 | **#0F4761 深蓝** |
 | 条目标题 `Definition 1.6. 名称` | 12pt（sz=24） | **编号加粗、名称常规** | 黑 |
@@ -236,6 +251,8 @@ det  lim  limsup  liminf  sup  inf  min  max  gcd  Pr
 |---|---|
 | `docDefaults` 段后 | 8pt（`after=160`） |
 | 正文 / 列表 行距 | `278/auto` ≈1.158（**列表与正文同**） |
+| **文档大标题 段前** | **6.25pt**（v16 补偿值，见下文 v16 说明） |
+| **作者行 段前** | **17.6pt**（v16 补偿值 = 8 + 9.6，见下文 v16 说明） |
 | 章 段前 / 段后 | 24pt / 4pt |
 | 节 段前 / 段后 | 8pt / 4pt |
 | **条目标题 段前 / 段后** | **36pt / 8pt**（视觉间距 ≈ 53pt） |
@@ -379,6 +396,11 @@ PY=C:/Users/Admin/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe
 **动手前先按上面的「取舍规则」过一遍素材**：把 `Example` / `Exercise` / 动机 /
 直觉 / 解释段 / 参考表格划掉，只留**编号条目 + 条件结论 + 关键公式**。
 写完自检一遍：**这份东西能替读者省下翻讲义的时间吗？** 不能就是删得不够。
+
+> **文档大标题不写在 md 里**（v16）。它由**输出文件名**自动生成：`doc_title=None` →
+> 取 `dst` 的文件名主干。所以**输出文件名必须写成 `<科目名> Outline.docx`**，
+> 否则大标题会跟着错（样本就是"大标题 == 文件名"）。
+> 要显式指定就在 CFG 里设 `doc_title='…'`；作者行默认 `By JasonTan`，`doc_author=''` 可关掉。
 
 | 写法 | 结果 |
 |---|---|
@@ -836,6 +858,67 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/finalize_docx.ps1 `
 > 想回到样本的素净样子：`toc_bold1=False`、`toc_color1=None`、`toc_entry1=11`、
 > `toc_before1=0`、`toc_after1=0`。
 
+### v16：文档大标题 + 作者行（2026-10-03，用户：「是不是没有按照之前的模板加大标题？」）
+
+**问题**：用户发现生成的提纲**没有文档大标题**。实测确认属实 —— `build_note.py` 只有
+`toc_title`（= `Contents`），**没有任何"文档标题"概念**；`analyze_outline.py` 也没有 `title` 分类。
+`template-spec.md` 里那句"我们的笔记没有文档标题"是**生成侧的自我描述**（循环论证），不是样本事实。
+
+**样本实测**（7 份 Year 1 Outline 的段落 0 / 1，OOXML + PDF 双向量测）：
+
+| 项 | 实测值 | 样本一致性 |
+|---|---|---|
+| 段落 0 文字 | **`<课程全名> Outline`** | 6/6 可读样本都有（LA 那份 docx 损坏读不出） |
+| 段落 0 格式 | Cambria Math、sz=32(16pt)、加粗、左对齐、**无 `w:jc` / 无 `w:spacing` / 无 color** | 5/6 加粗（Statistics I 未加粗，PDF 里还退化成 DengXian，属其笔误） |
+| 段落 1 文字 | `By JasonTan`（ITVC 作 `BY`） | **3/6** 有；ODEs / Real Analysis 是空段，Statistics I 没有 |
+| 段落 1 格式 | Algerian、sz=28(14pt)、常规、**`w:jc=right`**、无 spacing | 同上 |
+| 渲染（Prob I / MFA PDF） | 标题行框顶 **y0=81.07pt**；标题→作者 Δ=**23.47pt**；作者→目录首行 Δ=**17.55pt** | 两份**逐位相同** |
+
+**关键坑一：样本的 `sectPr` 带行网格** —— `<w:docGrid w:type="lines" w:linePitch="312"/>`
+（Word 东亚版式默认），本脚本输出的是 python-docx 默认（无网格）。**单变量实验**：
+把样本的 `docGrid` 塞进我们的 docx 后，标题 y0 74.83 → **81.07**、Δ 13.87 → **23.47**，
+与样本**完全一致** —— 差异 100% 来自行网格。
+
+但行网格是**文档级**属性，会改变全篇行距（实测 **6 页 → 7 页，+17%**），
+而 v11/v13 的间距是在**无网格**渲染下校准的，启用网格会把它们全部推翻。
+**决定（用户 2026-10-03 拍板）：保持无网格，用显式段前把这两行补回样本的渲染值。**
+
+**关键坑二：Word 段间间距取 `max(上一段 after, 本段 before)`，不是相加。**
+标题继承来的 `after=8pt` 会盖住作者行较小的 `before`。所以作者行 `before` 必须写成
+**17.6pt（= 8 + 9.6）**；只写 9.6pt 只净增 1.6pt（实测 13.87 → 15.43，正是此因）。
+
+**实现**（`build_note.py`）：
+- 新增 CFG：`doc_title` / `doc_title_size` / `doc_title_bold` /
+  `doc_author` / `doc_author_size` / `doc_author_font` / `doc_title_before` / `doc_author_before`
+- `doc_title=None` → **自动取输出文件名主干**（样本"大标题 == 文件名"：
+  `Probability I Outline.docx` 的标题就是 `Probability I Outline`）；置 `''` 则不加
+- 插入顺序（`body.insert(0, …)` 倒序执行）：**大标题 → 作者行 → `Contents` → TOC 域**
+- 新增 `_xml_esc()`：标题里的 `&`（`Mathematical Foundation & Analysis Outline`）
+  直接拼进 `w:t` 会产出非法 XML，必须转义。**注意它与 `_esc_prose()` 的私用区占位符是两回事**
+- 若将来决定启用行网格，把 `doc_title_before` / `doc_author_before` 改成 `0` 即可
+
+**验证**（Word 导出 PDF 后逐行量 bbox，非读 XML 猜）：
+
+| 指标 | 样本 Prob I / MFA | 本脚本 v16 |
+|---|---|---|
+| 标题 y0 | 81.07 | **81.07** ✓ |
+| 标题→作者 Δ | 23.47 | **23.47** ✓ |
+| 标题字号 | 15.96 | **15.96** ✓ |
+| 作者字号 | 14.04 | **14.04** ✓ |
+| 作者右边缘 x1 | 508.93 | **509.05** ✓（页宽差 0.1pt） |
+| 字体 | CambriaMath / Algerian | **同** ✓ |
+| 硬指标（`verify_docx.py`） | — | 裸行内公式 0 / 正文 NBSP 0 / 汉字 0 / 公式失败 0 ✓ |
+
+**顺带修了 `analyze_outline.py`**：新增 `title` / `author` 两个分类。
+之前样本的大标题和作者行被算进 `body`，把 16pt/14pt 混进正文字号统计、把
+`Algerian` 混进字体统计、把 `right` 混进对齐统计 —— 直接污染"规范只来自实测"。
+修后样本 body 从 182 → 180 段，字体统计里的 `Algerian` 消失。
+
+> ⚠ **已知限制**：`analyze_outline.py` 报告的 `after` / `before` / `line` 是**段落直接 pPr**
+> 的值，**不沿样式链解析**（只有字号走了 `eff_sz`）。所以本脚本产物的 `title` 会显示
+> `after=200 line=276`（docDefaults），而实际生效的是 Normal 样式里的 `160 / 278`。
+> 拿它下间距结论时要注意。
+
 ## 参考
 
 - `references/template-spec.md` — 页面、字体、层级、编号、列表、分行规则的完整实测规范，
@@ -847,7 +930,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/finalize_docx.ps1 `
 | 脚本 | 作用 |
 |---|---|
 | `scripts/build_note.py` | Markdown + LaTeX → docx。顶部 `CFG` 集中调参；自带目录/页码（v15） |
-| `scripts/verify_docx.py` | 回读硬指标：裸行内公式=0、正文 NBSP=0、公式失败=0、`w:i=0`、目录/页码域状态 |
+| `scripts/verify_docx.py` | 回读硬指标：裸行内公式=0、正文 NBSP=0、公式失败=0、**正文含汉字=0**（`--allow-cjk` 豁免）、`w:i=0`、目录/页码域状态 |
 | `scripts/selftest_formulas.py` | 公式 / 定界符 / 正体 / 行宽估算自检（不依赖 docx） |
 | `scripts/finalize_docx.ps1` | **Word 刷新目录与页码域** → 回写 docx → 导出 PDF（v15 必跑） |
 | `scripts/restore_upright.py` | 补回 Word 保存时删掉的 `<w:i w:val="0"/>` 正体提示（v15） |

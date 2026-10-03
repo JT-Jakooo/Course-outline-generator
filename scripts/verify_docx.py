@@ -39,7 +39,7 @@ def main(path):
     #   含正文文字 + 行内公式  -> 正文行（混排），期望存在，靠 w:jc 左对齐、自然折行
     #   只有行内公式、没有文字 -> Word 会当数学段落默认居中排，必须为 0
     #   有 m:oMathPara         -> 纯公式行（$$ 块 / 拆出来的大运算符公式）
-    prose_par, bare_par, para_par = 0, 0, 0
+    prose_par, bare_par, para_par, bare_list = 0, 0, 0, 0
     for pm in re.finditer(r'<w:p\b.*?</w:p>', d, re.S):
         blk = pm.group(0)
         if '<m:oMathPara' in blk:
@@ -52,11 +52,18 @@ def main(path):
             r'<w:r\b(?:(?!</w:r>).)*?<w:t[^>]*>[^<]*\S', blk, re.S) is not None
         if has_text:
             prose_par += 1
+        elif '<w:numPr>' in blk:
+            # 列表项：项目符号在 numbering 里，段落可以没有文字 run；
+            # 且 Word 往返会把列表段里的 oMathPara 外壳拆掉（实测 3->1），渲染仍左对齐
+            #（2026-10-01 Practical Statistics 实测：编号列表的缩进与对齐不受影响）。
+            # 故单独计数，不计入 bare_par。
+            bare_list += 1
         else:
             bare_par += 1
     print(f'正文行(文字+行内公式): {prose_par}   <- 期望存在；左对齐 + 自然折行')
     print(f'纯公式行(oMathPara)  : {para_par}   <- $$ 块 + 从正文拆出的大运算符公式')
     print(f'裸行内公式段落       : {bare_par}   <- 必须为 0；>0 会被 Word 默认居中')
+    print(f'裸公式列表项(单独计数): {bare_list}   <- 纯公式列表项，Word 往返后属预期，渲染仍左对齐')
 
     # 正文（w:t，公式之外的 prose run）里的 NBSP：样本实测为 0。
     #   —— 这才是真正的"词间断不开"隐患，必须为 0。
@@ -73,6 +80,19 @@ def main(path):
             nbsp_math += 1
     print(f'正文 w:t 含 NBSP     : {nbsp_body}   <- 必须为 0；>0 会让 Word 无法在词间断行')
     print(f'公式内 m:nor 含 NBSP : {nbsp_math}   <- 预期行为（thin/quad 等显式间距，不可断行），不计违规')
+
+    # ---- CJK 汉字检查（2026-10-03 PDE 提纲事故）----
+    # 跨科目约定：生成的提纲/作业文档必须全英文，正文严禁混入中文。
+    # 只查 prose w:t（标题/段落文本）；公式内 m:t 不查（数学符号正常应无汉字，
+    # 但为降低误报风险先不纳入硬失败）。加 --allow-cjk 可豁免（确要出中文文档时）。
+    cjk_re = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf]')
+    cjk_hits = []
+    for mm in re.finditer(r'<w:r\b(?:(?!</w:r>).)*?<w:t[^>]*>(.*?)</w:t>', d, re.S):
+        if cjk_re.search(mm.group(1)):
+            cjk_hits.append(mm.group(1).strip()[:60])
+    allow_cjk = '--allow-cjk' in sys.argv[2:]
+    print(f'正文含汉字         : {len(cjk_hits)}   <- 必须为 0；示例: {cjk_hits[:3] if cjk_hits else "（无）"}'
+          + ('   <-- --allow-cjk 已豁免' if allow_cjk and cjk_hits else ''))
 
     up = len(re.findall(r'<w:i w:val="0"/>', d))
     print(f'w:i=0(强制正体)  : {up}   <- 公式内正文 run 的正体保障')
@@ -133,11 +153,13 @@ def main(path):
     print(f'段后间距分布     : {dict(sp_after.most_common(5))}')
     print(f'行距分布         : {dict(sp_line.most_common(5))}')
 
-    return 1 if (fail or bare_par) else 0
+    return 1 if (fail or bare_par or (cjk_hits and not allow_cjk)) else 0
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
+    # 第 2 参起仅接受 --allow-cjk（豁免正文中文字符检查）
+    extra = [a for a in sys.argv[2:] if a != '--allow-cjk']
+    if len(sys.argv) < 2 or extra:
         print(__doc__)
         sys.exit(1)
     sys.exit(main(sys.argv[1]))

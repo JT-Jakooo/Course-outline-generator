@@ -13,7 +13,7 @@
 提取内容：
     1. 页面设置（纸张、页边距、页眉页脚引用）
     2. styles.xml：docDefaults + 各命名样式（含 basedOn 链解析）
-    3. 段落分类统计：chapter / section / entry / body / list / toc / empty
+    3. 段落分类统计：title / author / chapter / section / entry / body / list / toc / empty
        每类给出真实生效的字号、加粗、字体、颜色、段前后间距、行距、缩进、对齐
     4. 公式对象统计：m:oMath / m:oMathPara / m:jc(对齐) / m:nor / m:d / m:m
     5. 结构统计：Chapter 数、条目标题模式、列表、图表、TOC 域
@@ -43,7 +43,8 @@ ENTRY_LABEL_RE = re.compile(
     r'^((?:Definition|Theorem|Proposition|Corollary|Lemma|Remark|Example|'
     r'Note|Recall|Axiom|Claim|Fact|Notation|Exercise)\s*[\d.]+\.?)')
 
-CATS = ('chapter', 'section', 'entry', 'body', 'list', 'toc', 'empty')
+CATS = ('title', 'author', 'chapter', 'section', 'entry', 'body', 'list',
+        'toc', 'empty')
 
 
 def _w(el, name):
@@ -239,8 +240,9 @@ def analyze(path):
 
     n_list_style = n_numpr = 0
     entry_types = Counter()
+    first_text_idx = None          # v16：正文里第一个非空段落 = 文档大标题
 
-    for p in paras:
+    for idx, p in enumerate(paras):
         ppr = p.find(W + 'pPr')
         prof = ppr_profile(ppr)
         sid = prof.get('pStyle')
@@ -266,6 +268,16 @@ def analyze(path):
         has_math = bool(math_runs)
 
         cat = classify(p, sname, text, has_math)
+        # v16：文档大标题 / 作者行。样本段落 0 = 大标题（16pt 加粗、无样式），
+        # 段落 1 = 作者行（jc=right、Algerian）。不单列的话会被算进 body，
+        # 把 16pt/14pt、Algerian、right 这些值混进正文统计，污染"规范只来自实测"。
+        if cat != 'empty' and first_text_idx is None:
+            first_text_idx = idx
+        if cat == 'body' and idx == first_text_idx:
+            cat = 'title'
+        elif (cat == 'body' and first_text_idx is not None
+              and idx == first_text_idx + 1 and prof.get('jc') == 'right'):
+            cat = 'author'
         d = cat_data[cat]
         d['n'] += 1
         d['pstyle'][sname or '(none)'] += 1

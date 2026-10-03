@@ -244,6 +244,38 @@ CFG = dict(
     page_number_format='both',  # 'both' -> "X / Y"（样本）；'page' -> 仅 "X"
     page_number_size=10,        # 页脚字号
     page_number_gap=992,        # 页脚距下边距 twips（样本 pgMar footer=992）
+    # === v16：文档大标题 + 作者行（对齐 7 份 Year 1 样本实测，2026-10-03）===
+    # 样本段落 0 = "<课程全名> Outline"。逐属性实测：
+    #   Cambria Math、sz=32(16pt)、加粗、左对齐、**无 w:jc / 无 w:spacing / 无 color**
+    #   （即继承 docDefaults：段后 8pt、行距 278/auto）—— 6/6 可读样本一致（Statistics I 未加粗，属其笔误）。
+    # 样本段落 1 = 作者行。逐属性实测：
+    #   Algerian、sz=28(14pt)、**常规**、**jc=right**、无 spacing（3/6 样本有；ITVC 是 16pt 加粗）。
+    #   渲染实测（Prob I / MFA 的 PDF 首页）：标题→作者 行框底→顶 Δ=23.47pt；
+    #   作者→目录首行 Δ=17.55pt；标题行框顶 y0=81.07pt（正文区顶 = 72pt）。
+    # doc_title=None -> 自动取**输出文件名主干**（样本"大标题 == 文件名"，如
+    #   `Probability I Outline.docx` 的标题就是 `Probability I Outline`）。
+    #   置 '' 则不加标题行；给字符串则用该字符串。
+    doc_title=None,
+    doc_title_size=16,
+    doc_title_bold=True,
+    doc_author='By JasonTan',   # 置 None 或 '' 则不加作者行
+    doc_author_size=14,
+    doc_author_font='Algerian',
+    # --- 为什么这两行要"显式段前"补偿（2026-10-03 单变量实验结论）---
+    # 样本 sectPr 带 **行网格** `<w:docGrid w:type="lines" w:linePitch="312"/>`
+    # （Word 东亚版式默认），本脚本输出的是 python-docx 默认（无网格）。
+    # 实测：把样本的 docGrid 加进我们的 docx 后，标题 y0 74.83 → **81.07**、
+    # 标题→作者 Δ 13.87 → **23.47**，与样本**完全一致** —— 证明差异全来自行网格。
+    # 但行网格是**文档级**属性，会改变全篇行距（实测 6 页 → 7 页，+17%），
+    # 而 v11/v13 的间距是在**无网格**渲染下校准的，加网格会把它们全部推翻。
+    # 故采取与全篇一致的策略：**保持无网格，用显式段前把这两行补回样本的渲染值**。
+    # （样本这两段本身不写 w:spacing，纯继承 docDefaults；我们的补偿值 = 实测差值。）
+    # ⚠ 段间间距 Word 取 **max(上一段 after, 本段 before)**，不是相加 —— 所以
+    #   作者行 before 要写成 **8 + 9.6 = 17.6pt**（8pt 是标题继承来的 after），
+    #   只写 9.6pt 只会净增 1.6pt（实测 13.87 → 15.43，正是这个原因）。
+    # 若将来决定启用行网格，把这两个值改成 0 即可。
+    doc_title_before=6.25,      # pt；补偿"无网格"下标题位置偏高 6.24pt（文档首段，before 直接生效）
+    doc_author_before=17.6,     # pt；= 8(标题 after) + 9.6(实测差值)，使 Δ 回到样本的 23.47pt
 )
 
 XSL_PATH = r'C:/Program Files/Microsoft Office/root/Office16/MML2OMML.XSL'
@@ -847,6 +879,15 @@ def _esc_prose(s):
     for ch, ph in _PH.items():
         s = s.replace(ch, ph)
     return s
+
+
+def _xml_esc(s):
+    """给**直接拼进 w:t 的 XML 字符串**做转义（与 _esc_prose 的私用区占位符是两回事）。
+
+    样本大标题含 `&`（`Mathematical Foundation & Analysis Outline`），
+    不转义会产出非法 XML。
+    """
+    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
 def _text_seg(s, bold=False):
@@ -1572,8 +1613,8 @@ def _ensure_toc_styles(doc):
         styles.append(parse_xml(xml))
 
 
-def _insert_toc(doc):
-    """在正文最前面插入 [目录标题][TOC 域]，并让第一个章标题另起一页。
+def _insert_toc(doc, dst):
+    """在正文最前面插入 [大标题][作者行][目录标题][TOC 域]，并让第一个章标题另起一页。
 
     TOC 域是**原生域**：页码由 Word 生成，不是我们硬编码的，所以增删内容后
     按 F9（或跑 finalize_docx.ps1）即可刷新。域内先放一段占位结果，
@@ -1612,6 +1653,44 @@ def _insert_toc(doc):
                CFG['toc_title'])
         )
         body.insert(0, title_p)
+
+    # === v16：文档大标题 + 作者行（插到最前，顺序 = 大标题 / 作者 / 目录标题 / TOC 域）===
+    # 逐属性复刻样本：标题段**不写 w:jc、不写 w:spacing、不写 color**，全部继承 docDefaults；
+    # 作者段写 jc=right + Algerian。多写一个属性就会偏离样本渲染。
+    if CFG['doc_author']:
+        _af = CFG['doc_author_font']
+        _asz = int(round(CFG['doc_author_size'] * 2))
+        author_p = parse_xml(
+            '<w:p %s><w:pPr><w:spacing w:before="%d"/><w:jc w:val="right"/><w:rPr>'
+            '<w:rFonts w:ascii="%s" w:hAnsi="%s"/><w:sz w:val="%d"/><w:szCs w:val="%d"/>'
+            '</w:rPr></w:pPr>'
+            '<w:r><w:rPr><w:rFonts w:ascii="%s" w:hAnsi="%s"/>'
+            '<w:sz w:val="%d"/><w:szCs w:val="%d"/></w:rPr>'
+            '<w:t xml:space="preserve">%s</w:t></w:r></w:p>'
+            % (nsdecls('w'), int(round(CFG['doc_author_before'] * 20)),
+               _af, _af, _asz, _asz + 2, _af, _af, _asz, _asz + 2,
+               _xml_esc(CFG['doc_author']))
+        )
+        body.insert(0, author_p)
+
+    _dt = CFG['doc_title']
+    if _dt is None:                       # None -> 取输出文件名主干（样本：标题 == 文件名）
+        _dt = Path(dst).stem
+    if _dt:
+        _dsz = int(round(CFG['doc_title_size'] * 2))
+        _b = '<w:b/><w:bCs/>' if CFG['doc_title_bold'] else ''
+        doc_title_p = parse_xml(
+            '<w:p %s><w:pPr><w:spacing w:before="%d"/><w:rPr>'
+            '<w:rFonts w:ascii="%s" w:hAnsi="%s"/>%s'
+            '<w:sz w:val="%d"/><w:szCs w:val="%d"/></w:rPr></w:pPr>'
+            '<w:r><w:rPr><w:rFonts w:ascii="%s" w:hAnsi="%s"/>%s'
+            '<w:sz w:val="%d"/><w:szCs w:val="%d"/></w:rPr>'
+            '<w:t xml:space="preserve">%s</w:t></w:r></w:p>'
+            % (nsdecls('w'), int(round(CFG['doc_title_before'] * 20)),
+               FONT, FONT, _b, _dsz, _dsz + 2,
+               FONT, FONT, _b, _dsz, _dsz + 2, _xml_esc(_dt))
+        )
+        body.insert(0, doc_title_p)
 
     # 目录后另起一页（样本实测：目录独占前面的页，正文从新页开始）
     if CFG['toc_break']:
@@ -1682,11 +1761,11 @@ def _set_update_fields(doc):
     st.append(el)
 
 
-def _finalize_toc_and_pages(doc):
-    """按 CFG 装配目录与页码。"""
+def _finalize_toc_and_pages(doc, dst):
+    """按 CFG 装配目录与页码（v16 起还要装配文档大标题 / 作者行，需 dst 取文件名主干）。"""
     if CFG['toc']:
         _ensure_toc_styles(doc)
-        _insert_toc(doc)
+        _insert_toc(doc, dst)
     if CFG['page_numbers']:
         _add_page_numbers(doc)
     if CFG['toc'] or CFG['page_numbers']:
@@ -2018,7 +2097,7 @@ def build(src, dst, jc=None):
     # v12：收尾最后一个条目（除末段外全部 keep_with_next，保证整块同页）
     for p in entry_paras[:-1]:
         p.paragraph_format.keep_with_next = True
-    _finalize_toc_and_pages(doc)      # v15：目录 + 页码
+    _finalize_toc_and_pages(doc, dst)  # v15 目录 + 页码；v16 大标题 + 作者行
     doc.save(dst)
     print(f'已生成 {dst}（块级公式 {n_disp} 个，失败 {_ERR} 个'
           + ('，含目录' if CFG['toc'] else '')
